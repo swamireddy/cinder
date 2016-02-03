@@ -33,6 +33,15 @@ class SnapshotActionsController(wsgi.Controller):
         super(SnapshotActionsController, self).__init__(*args, **kwargs)
         LOG.debug("SnapshotActionsController initialized")
 
+
+    @wsgi.action('os-reset_snapshot_permission')
+    def _reset_snapshot_permission(self, req, id, body):
+
+       context = req.environ['cinder.context']
+       authorize(context, 'update_snapshot_status')
+       snapshot = db.snapshot_reset_permission(context, id)
+       return webob.Response(status_int=202)
+
     @wsgi.action('os-update_snapshot_status')
     def _update_snapshot_status(self, req, id, body):
         """Update database fields related to status of a snapshot.

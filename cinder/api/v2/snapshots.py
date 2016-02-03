@@ -52,6 +52,7 @@ def _translate_snapshot_summary_view(context, snapshot):
     d['volume_id'] = snapshot['volume_id']
     d['status'] = snapshot['status']
     d['size'] = snapshot['volume_size']
+    d['is_public'] = snapshot['is_public']
 
     if snapshot.get('snapshot_metadata'):
         metadata = snapshot.get('snapshot_metadata')
@@ -62,6 +63,14 @@ def _translate_snapshot_summary_view(context, snapshot):
         d['metadata'] = snapshot['metadata']
     else:
         d['metadata'] = {}
+
+    if(context.project_id == snapshot['project_id']):
+        d['is_own'] = True
+        d['volume_id'] = snapshot['volume_id']
+    else:
+        d['is_own'] = False
+        d['volume_id'] = None
+
     return d
 
 
@@ -149,7 +158,8 @@ class SnapshotsController(wsgi.Controller):
         search_opts.pop('offset', None)
 
         #filter out invalid option
-        allowed_search_options = ('status', 'volume_id', 'name')
+        allowed_search_options = ('status', 'volume_id', 'name',
+                                  'include_public', 'include_shared')
         utils.remove_invalid_filter_options(context, search_opts,
                                             allowed_search_options)
 
@@ -210,6 +220,7 @@ class SnapshotsController(wsgi.Controller):
                 volume,
                 snapshot.get('display_name'),
                 snapshot.get('description'),
+                strutils.bool_from_string(snapshot.get('is_public')),
                 **kwargs)
         else:
             new_snapshot = self.volume_api.create_snapshot(
@@ -217,11 +228,29 @@ class SnapshotsController(wsgi.Controller):
                 volume,
                 snapshot.get('display_name'),
                 snapshot.get('description'),
+                strutils.bool_from_string(snapshot.get('is_public')),
                 **kwargs)
 
         retval = _translate_snapshot_detail_view(context, new_snapshot)
 
         return {'snapshot': retval}
+
+
+
+    @wsgi.serializers(xml=SnapshotTemplate)
+    def shareSnapshot(self, req, id, body):
+       "share a snapshot with another tenant "
+       context = req.environ['cinder.context']
+       try:
+            snapshot = self.volume_api.get_snapshot(context, id)
+            self.volume_api.share_snapshot(context, id, body["snapshot"]["tenant_id"])
+        except exception.NotFound:
+            msg = _("Snapshot could not be found")
+            raise exc.HTTPNotFound(explanation=msg)
+
+
+        return {'snapshot': _translate_snapshot_detail_view(context, snapshot)}
+
 
     @wsgi.serializers(xml=SnapshotTemplate)
     def update(self, req, id, body):
@@ -245,6 +274,7 @@ class SnapshotsController(wsgi.Controller):
             'description',
             'display_name',
             'display_description',
+            'is_public'
         )
 
         # NOTE(thingee): v2 API allows name instead of display_name
@@ -263,7 +293,8 @@ class SnapshotsController(wsgi.Controller):
                 update_dict[key] = snapshot[key]
 
         try:
-            snapshot = self.volume_api.get_snapshot(context, id)
+	    kwargs['snapshot'] = self.volume_api.get_snapshot_from_sharedsnapshots(context,
+                                                                   snapshot_id)
             self.volume_api.update_snapshot(context, snapshot, update_dict)
         except exception.NotFound:
             msg = _("Snapshot could not be found")

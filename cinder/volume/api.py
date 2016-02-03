@@ -404,6 +404,15 @@ class API(base.Base):
         rv = self.db.snapshot_get(context, snapshot_id)
         return dict(rv.iteritems())
 
+
+    def get_snapshot_from_sharedsnapshots(self,context,snapshot_id):
+       snapshot=self.db.snapshot_get_from_sharedsnapshots(context,snapshot_id)
+       return dict(snapshot.iteritems())
+
+    def volume_get_if_has_sharedSnapshot(self,context,volume_id):
+       volume=self.db.volume_get_if_has_sharedSnapshot(context,volume_id)
+       return dict(volume.iteritems())
+
     def get_volume(self, context, volume_id):
         check_policy(context, 'get_volume')
         rv = self.db.volume_get(context, volume_id)
@@ -419,8 +428,51 @@ class API(base.Base):
             del search_opts['all_tenants']
             snapshots = self.db.snapshot_get_all(context)
         else:
-            snapshots = self.db.snapshot_get_all_by_project(
-                context, context.project_id)
+            if('include_public' in search_opts and 'include_shared' in search_opts):
+                 search_opts['include_public'] = \
+                     strutils.bool_from_string(search_opts['include_public'])
+               search_opts['include_shared'] = \
+                    strutils.bool_from_string(search_opts['include_shared'])
+
+                snapshots = \
+                    self.db.\
+                    snapshot_get_all_by_project(context,
+                                                context.project_id,
+                                                search_opts['include_public'],search_opts['include_shared'])
+               del search_opts['include_shared']
+           elif('include_public' in search_opts or 'include_shared' in search_opts):
+               if('include_public' in search_opts):
+                   search_opts['include_public'] = \
+                    strutils.bool_from_string(search_opts['include_public'])
+                    snapshots = \
+                    self.db.\
+                    snapshot_get_all_by_project(context,
+                                                context.project_id,
+                                                search_opts['include_public'])
+                   del search_opts['include_public']
+               else:
+
+                    search_opts['include_shared'] = \
+                    strutils.bool_from_string(search_opts['include_shared'])
+                    snapshots = \
+                     self.db.\
+                    snapshot_get_all_by_project(context,
+                                                context.project_id,
+                                                include_shared=search_opts['include_shared'])
+
+
+                    del search_opts['include_shared']
+
+
+
+            else:
+
+               snapshots = \
+                self.db.\
+                snapshot_get_all_by_project(context, context.project_id)
+
+                    self.db.\
+                    snapshot_get_all_by_project(context, context.project_id)
 
         if search_opts:
             LOG.debug("Searching by: %s" % search_opts)
@@ -436,7 +488,11 @@ class API(base.Base):
             snapshots = results
         return snapshots
 
-    @wrap_check_policy
+
+    def share_snapshot(self,context,snapshot_id,tenant_id):
+       self.db.snapshot_share(context, snapshot_id, tenant_id)
+
+   @wrap_check_policy
     def reserve_volume(self, context, volume):
         #NOTE(jdg): check for Race condition bug 1096983
         #explicitly get updated ref and check
@@ -526,12 +582,12 @@ class API(base.Base):
                                                   new_project)
 
     def _create_snapshot(self, context,
-                         volume, name, description,
+                         volume, name, description, is_public,
                          force=False, metadata=None,
                          cgsnapshot_id=None):
         snapshot = self.create_snapshot_in_db(
             context, volume, name,
-            description, force, metadata, cgsnapshot_id)
+            description, force, metadata, cgsnapshot_id, is_public)
         self.volume_rpcapi.create_snapshot(context, volume, snapshot)
 
         return snapshot
@@ -539,7 +595,7 @@ class API(base.Base):
     def create_snapshot_in_db(self, context,
                               volume, name, description,
                               force, metadata,
-                              cgsnapshot_id):
+                              cgsnapshot_id, is_public):
         check_policy(context, 'create_snapshot', volume)
 
         if volume['migration_status'] is not None:
